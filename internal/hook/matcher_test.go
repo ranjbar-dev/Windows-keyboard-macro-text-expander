@@ -108,6 +108,59 @@ func TestBufferCapPreventsUnboundedGrowth(t *testing.T) {
 	}
 }
 
+func TestCtrlAClearsBuffer(t *testing.T) {
+	now := time.Now()
+	m := clockMatcher(t, &now)
+
+	typeRunes(m, "gg")
+	// Ctrl down (modifier, ignored) then 'A' resolving to Ctrl+A control code.
+	m.OnKey(0x11, 0)    // VK_CONTROL
+	m.OnKey(0x41, 0x01) // 'A' under Ctrl -> SOH (non-printable)
+	// Selection replaced; user re-types the trigger.
+	typeRunes(m, "gg")
+	exp, _, suppress := m.OnKey(VKTab, '\t')
+	if !suppress || exp != "hello" {
+		t.Errorf("expected fire after Ctrl+A reset + retype, got suppress=%v exp=%q", suppress, exp)
+	}
+}
+
+func TestModifierDoesNotClearBuffer(t *testing.T) {
+	now := time.Now()
+	m := clockMatcher(t, &now)
+
+	m.OnKey(0x10, 0) // Shift down before a capital — must NOT clear
+	typeRunes(m, "gg")
+	m.OnKey(0xA1, 0) // RShift again mid-stream
+	_, _, suppress := m.OnKey(VKTab, '\t')
+	if !suppress {
+		t.Error("modifier keys must not clear the buffer")
+	}
+}
+
+func TestNavigationKeyClearsBuffer(t *testing.T) {
+	now := time.Now()
+	m := clockMatcher(t, &now)
+
+	typeRunes(m, "gg")
+	m.OnKey(0x25, 0) // VK_LEFT arrow (non-printable, non-modifier) -> clear
+	_, _, suppress := m.OnKey(VKTab, '\t')
+	if suppress {
+		t.Error("arrow key should have cleared the buffer")
+	}
+}
+
+func TestResetClearsBuffer(t *testing.T) {
+	now := time.Now()
+	m := clockMatcher(t, &now)
+
+	typeRunes(m, "gg")
+	m.Reset() // e.g. a mouse click
+	_, _, suppress := m.OnKey(VKTab, '\t')
+	if suppress {
+		t.Error("Reset should have cleared the buffer")
+	}
+}
+
 func TestEnterTerminatorMatches(t *testing.T) {
 	now := time.Now()
 	m := clockMatcher(t, &now)

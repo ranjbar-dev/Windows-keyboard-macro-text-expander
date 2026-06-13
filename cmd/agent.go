@@ -35,13 +35,18 @@ func RunAgent() {
 		return
 	}
 
-	// The hook must be installed and pumped on one OS-locked thread.
+	// The hooks must be installed and pumped on one OS-locked thread.
 	go func() {
 		runtime.LockOSThread()
 		if err := hook.Install(a.engine.HandleKey); err != nil {
 			logFatal(fmt.Errorf("install keyboard hook: %w", err))
 			tray.SetState(tray.Error)
 			return
+		}
+		// Reset the trigger buffer on mouse clicks (caret moves / selection
+		// replacement the keyboard hook can't observe). Non-fatal if it fails.
+		if err := hook.InstallMouse(a.engine.Reset); err != nil {
+			logFatal(fmt.Errorf("install mouse hook (click-reset disabled): %w", err))
 		}
 		hook.RunMessagePump()
 	}()
@@ -51,7 +56,10 @@ func RunAgent() {
 		OnPauseToggle:  a.engine.SetPaused,
 		OnReloadConfig: a.reload,
 		OnOpenConfig:   a.openConfig,
-		OnExit:         func() { _ = hook.Uninstall() },
+		OnExit: func() {
+			_ = hook.Uninstall()
+			_ = hook.UninstallMouse()
+		},
 	})
 }
 

@@ -121,6 +121,28 @@ func TestPausedDoesNotExpand(t *testing.T) {
 	}
 }
 
+func TestResetClearsTriggerBuffer(t *testing.T) {
+	mock := &mockSender{}
+	e := testEngine(mock)
+
+	e.HandleKey('x', 'x') // stale char from before the click
+	e.Reset()             // simulate a mouse click / selection replacement
+	e.HandleKey('g', 'g') // fully retype the trigger
+	e.HandleKey('g', 'g')
+	if !e.HandleKey(hook.VKTab, '\t') {
+		t.Fatal("trigger should still fire when fully retyped after Reset")
+	}
+
+	mock2 := &mockSender{}
+	e2 := testEngine(mock2)
+	e2.HandleKey('g', 'g') // buffer: "g"
+	e2.Reset()             // buffer cleared
+	e2.HandleKey('g', 'g') // buffer: "g" (only one char since reset)
+	if e2.HandleKey(hook.VKTab, '\t') {
+		t.Error("partial buffer after Reset must not fire")
+	}
+}
+
 func TestReloadShortcuts(t *testing.T) {
 	mock := &mockSender{}
 	e := testEngine(mock)

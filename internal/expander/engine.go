@@ -74,6 +74,15 @@ func (e *Engine) HandleKey(vkCode uint32, char rune) bool {
 // SetPaused enables or disables expansion without uninstalling the hook.
 func (e *Engine) SetPaused(paused bool) { e.paused.Store(paused) }
 
+// Reset clears the in-progress trigger buffer. The agent calls this on mouse
+// clicks, which may move the caret or replace a selection the keyboard hook
+// cannot see. Safe to call from the hook thread alongside HandleKey.
+func (e *Engine) Reset() {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.matcher.Reset()
+}
+
 // Paused reports whether expansion is currently suspended.
 func (e *Engine) Paused() bool { return e.paused.Load() }
 

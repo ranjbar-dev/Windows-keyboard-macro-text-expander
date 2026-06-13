@@ -56,22 +56,29 @@ func NewMatcher(shortcuts []config.Shortcut, windowMs int) *Matcher {
 // number of trigger characters to erase when an expansion fires, along with
 // whether the key should be suppressed (consumed) by the caller.
 func (m *Matcher) OnKey(vkCode uint32, char rune) (expansion string, triggerLen int, suppress bool) {
-	switch vkCode {
-	case VKBack, VKEscape:
-		// Editing/cancel keys invalidate the in-progress token.
+	switch {
+	case vkCode == VKTab || vkCode == VKSpace || vkCode == VKReturn:
+		return m.onTerminator(vkCode)
+	case isModifier(vkCode):
+		// Shift/Ctrl/Alt/Win/lock keys do not themselves change the typed
+		// token; ignore them so e.g. Shift-typed capitals keep the buffer.
+		return "", 0, false
+	case isPrintable(char):
+		m.appendRune(char)
+		return "", 0, false
+	default:
+		// Backspace, Escape, arrows, Home/End/Delete and Ctrl/Alt chords (which
+		// resolve to non-printable characters, e.g. Ctrl+A) move the caret or
+		// replace a selection — the buffered token is no longer valid.
 		m.clear()
 		return "", 0, false
-	case VKTab, VKSpace, VKReturn:
-		return m.onTerminator(vkCode)
 	}
-	if isPrintable(char) {
-		m.appendRune(char)
-	}
-	// Modifier and navigation keys (char == 0) are intentionally left to pass
-	// through without clearing the buffer, so triggers typed with Shift held
-	// are not broken by the Shift key-down event.
-	return "", 0, false
 }
+
+// Reset clears the in-progress trigger buffer. The agent calls this when an
+// out-of-band event such as a mouse click moves the caret or replaces a
+// selection that the keyboard hook cannot observe.
+func (m *Matcher) Reset() { m.clear() }
 
 func (m *Matcher) onTerminator(vk uint32) (string, int, bool) {
 	buf := string(m.buf)
@@ -108,4 +115,18 @@ func (m *Matcher) clear() {
 
 func isPrintable(r rune) bool {
 	return r >= 0x20 && r != 0x7F
+}
+
+// isModifier reports whether vk is a modifier or lock key that should neither
+// extend nor clear the trigger buffer.
+func isModifier(vk uint32) bool {
+	switch vk {
+	case 0x10, 0xA0, 0xA1, // Shift / LShift / RShift
+		0x11, 0xA2, 0xA3, // Ctrl / LCtrl / RCtrl
+		0x12, 0xA4, 0xA5, // Alt(Menu) / LMenu / RMenu
+		0x5B, 0x5C, // LWin / RWin
+		0x14, 0x90, 0x91: // CapsLock / NumLock / ScrollLock
+		return true
+	}
+	return false
 }

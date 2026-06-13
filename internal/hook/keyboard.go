@@ -48,8 +48,9 @@ var (
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessage     = user32.NewProc("DispatchMessageW")
 	procToUnicodeEx         = user32.NewProc("ToUnicodeEx")
-	procGetKeyboardState    = user32.NewProc("GetKeyboardState")
 	procGetKeyboardLayout   = user32.NewProc("GetKeyboardLayout")
+	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
+	procGetKeyState         = user32.NewProc("GetKeyState")
 
 	kernel32            = windows.NewLazySystemDLL("kernel32.dll")
 	procGetModuleHandle = kernel32.NewProc("GetModuleHandleW")
@@ -121,12 +122,37 @@ func hookProc(nCode uintptr, wParam uintptr, lParam unsafe.Pointer) uintptr {
 	return ret
 }
 
-// resolveRune translates a virtual-key + scan code into a printable rune using
-// the current keyboard state and layout. Returns 0 for non-character keys and
-// dead keys.
+const (
+	vkShift          = 0x10
+	vkControl        = 0x11
+	vkMenu           = 0x12 // Alt
+	vkCapital        = 0x14 // Caps Lock
+	toUnicodeNoState = 0x4  // ToUnicodeEx: do not alter kernel keyboard state (Win 10 1607+)
+)
+
+// resolveRune translates a virtual-key + scan code into a printable rune.
+//
+// In a global low-level hook the per-thread keyboard state (GetKeyboardState)
+// does not reflect modifiers held for the focused app, so we build the state
+// from the physical key state (GetAsyncKeyState) plus the global Caps Lock
+// toggle. This makes Shift-capitals resolve correctly and — importantly —
+// makes Ctrl+<letter> resolve to a non-printable control code, which the
+// matcher treats as a buffer-clearing event (e.g. Ctrl+A select-all).
+// Returns 0 for non-character keys and dead keys.
 func resolveRune(vkCode, scanCode uint32) rune {
 	var state [256]byte
-	procGetKeyboardState.Call(uintptr(unsafe.Pointer(&state[0])))
+	if asyncDown(vkShift) {
+		state[vkShift] = 0x80
+	}
+	if asyncDown(vkControl) {
+		state[vkControl] = 0x80
+	}
+	if asyncDown(vkMenu) {
+		state[vkMenu] = 0x80
+	}
+	if r, _, _ := procGetKeyState.Call(uintptr(vkCapital)); r&0x1 != 0 {
+		state[vkCapital] = 0x1 // Caps Lock toggle (global for lock keys)
+	}
 	hkl, _, _ := procGetKeyboardLayout.Call(0)
 
 	var buf [8]uint16
@@ -136,11 +162,17 @@ func resolveRune(vkCode, scanCode uint32) rune {
 		uintptr(unsafe.Pointer(&state[0])),
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(len(buf)),
-		0,
+		toUnicodeNoState,
 		hkl,
 	)
 	if int32(ret) == 1 {
 		return rune(buf[0])
 	}
 	return 0
+}
+
+// asyncDown reports whether a key is physically pressed right now.
+func asyncDown(vk uint32) bool {
+	r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	return r&0x8000 != 0
 }
