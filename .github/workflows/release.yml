@@ -1,0 +1,57 @@
+name: Release
+
+# Publish a Windows build to the GitHub Releases section whenever a version
+# tag is pushed, e.g.:
+#
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+on:
+  push:
+    tags:
+      - "v*"
+
+# Needed for the gh CLI to create a release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish expander.exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build expander.exe
+        shell: pwsh
+        run: |
+          go build -trimpath -ldflags="-H windowsgui -s -w" -o expander.exe .
+          if (-not (Test-Path expander.exe)) { throw "build produced no expander.exe" }
+
+      - name: Generate SHA256 checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash expander.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  expander.exe" | Out-File -Encoding ascii -NoNewline expander.exe.sha256
+          Write-Host "SHA256: $hash"
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            expander.exe `
+            expander.exe.sha256 `
+            --title "${{ github.ref_name }}" `
+            --generate-notes
