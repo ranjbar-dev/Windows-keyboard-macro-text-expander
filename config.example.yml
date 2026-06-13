@@ -1,0 +1,30 @@
+# Expander configuration — copied to %APPDATA%\Expander\config.yml by `setup`.
+#
+# Rules:
+#   - expansion values prefixed with "ENC:" are AES-GCM encrypted + base64.
+#     Plaintext values are also accepted (handy for quick manual testing) and
+#     are re-encrypted the next time you run `expander.exe setup`.
+#   - terminator must be one of: Tab, Space, Enter
+#   - trigger must be 1-32 printable ASCII characters, no whitespace
+#   - description is optional free text
+
+settings:
+  # How long (ms) after the first trigger character the terminator may arrive
+  # for the expansion to fire. Defaults to 500 if omitted or zero.
+  timing_window_ms: 500
+
+shortcuts:
+  - trigger: "gg"
+    description: "Main account password"
+    terminator: "Tab"
+    expansion: "ENC:BASE64ENCODEDCIPHERTEXT..."
+
+  - trigger: "em1"
+    description: "Work email address"
+    terminator: "Space"
+    expansion: "ENC:BASE64ENCODEDCIPHERTEXT..."
+
+  - trigger: "addr"
+    description: "Home address"
+    terminator: "Enter"
+    expansion: "ENC:BASE64ENCODEDCIPHERTEXT..."

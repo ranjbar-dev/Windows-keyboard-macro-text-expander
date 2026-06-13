@@ -1,0 +1,9 @@
+# Build artifacts
+*.exe
+*.exe~
+*~
+
+# Local runtime files — the real config lives in %APPDATA%\Expander\
+/config.yml
+/config.salt
+/error.log
