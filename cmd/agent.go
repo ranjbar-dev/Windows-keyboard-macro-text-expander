@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -53,9 +54,11 @@ func RunAgent() {
 
 	tray.Run(&tray.Config{
 		ConfigPath:     a.configPath,
+		OnSetup:        a.openSetup,
 		OnPauseToggle:  a.engine.SetPaused,
 		OnReloadConfig: a.reload,
 		OnOpenConfig:   a.openConfig,
+		OnOpenErrorLog: openErrorLogFile,
 		OnExit: func() {
 			_ = hook.Uninstall()
 			_ = hook.UninstallMouse()
@@ -135,21 +138,87 @@ func (a *agent) openConfig() {
 	}
 }
 
+// openSetup launches the setup GUI in a separate process and, when it exits
+// successfully (config saved), reloads the config so the new shortcuts take
+// effect without restarting the agent.
+func (a *agent) openSetup() {
+	c, err := spawnSetupGUI()
+	if err != nil {
+		logFatal(fmt.Errorf("launch setup GUI: %w", err))
+		return
+	}
+	go func() {
+		if err := c.Wait(); err != nil {
+			return // non-zero exit: cancelled or GUI error, nothing to reload
+		}
+		if err := a.reload(); err != nil {
+			tray.SetState(tray.Error)
+			return
+		}
+		if tray.IsPaused() {
+			tray.SetState(tray.Paused)
+		} else {
+			tray.SetState(tray.Active)
+		}
+	}()
+}
+
 // runErrorTray shows a red tray icon after a startup failure, letting the user
-// open the error log and exit.
+// run setup (e.g. on first launch) or open the error log. On a successful setup
+// it starts a fresh agent process and exits.
 func runErrorTray() {
-	cfgPath, _ := configPath()
-	logPath, _ := errorLogPath()
 	tray.Run(&tray.Config{
-		InitialState: tray.Error,
-		ConfigPath:   cfgPath,
-		OnOpenConfig: func() {
-			if logPath != "" {
-				_ = winutil.OpenFile(logPath)
-			}
-		},
-		OnExit: func() {},
+		InitialState:   tray.Error,
+		OnSetup:        errorTraySetup,
+		OnOpenErrorLog: openErrorLogFile,
+		OnExit:         func() {},
 	})
+}
+
+// errorTraySetup runs the setup GUI from the error tray. The agent never
+// started here, so on success it relaunches a fresh agent and quits this one.
+func errorTraySetup() {
+	c, err := spawnSetupGUI()
+	if err != nil {
+		logFatal(fmt.Errorf("launch setup GUI: %w", err))
+		return
+	}
+	go func() {
+		if err := c.Wait(); err != nil {
+			return // cancelled or error: stay in the error tray
+		}
+		if exe, err := exePath(); err == nil {
+			_ = exec.Command(exe).Start()
+		}
+		tray.Quit()
+	}()
+}
+
+// spawnSetupGUI starts `expander.exe setup-gui` and returns the running command.
+func spawnSetupGUI() (*exec.Cmd, error) {
+	exe, err := exePath()
+	if err != nil {
+		return nil, err
+	}
+	c := exec.Command(exe, "setup-gui")
+	if err := c.Start(); err != nil {
+		return nil, fmt.Errorf("start setup GUI: %w", err)
+	}
+	return c, nil
+}
+
+// openErrorLogFile ensures error.log exists, then opens it in the default editor.
+func openErrorLogFile() {
+	p, err := errorLogPath()
+	if err != nil {
+		return
+	}
+	if f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close()
+	}
+	if err := winutil.OpenFile(p); err != nil {
+		logFatal(fmt.Errorf("open error log: %w", err))
+	}
 }
 
 // logFatal appends a timestamped fatal error to error.log (best effort).

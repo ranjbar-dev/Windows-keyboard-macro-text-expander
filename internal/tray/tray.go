@@ -21,11 +21,15 @@ const (
 	Error
 )
 
-// Config holds the callbacks the agent supplies for menu actions.
+// Config holds the callbacks the agent supplies for menu actions. Each menu
+// item is rendered only when its callback is non-nil, so the error tray (which
+// supplies only OnSetup/OnOpenErrorLog/OnExit) shows a reduced menu.
 type Config struct {
+	OnSetup        func()
 	OnPauseToggle  func(paused bool)
 	OnReloadConfig func() error
 	OnOpenConfig   func()
+	OnOpenErrorLog func()
 	OnExit         func()
 	ConfigPath     string
 	// InitialState is the icon state shown when the tray becomes ready
@@ -46,6 +50,13 @@ func Run(c *Config) {
 	cfg = c
 	systray.Run(onReady, onExit)
 }
+
+// IsPaused reports whether expansion is currently paused. Used by the agent to
+// restore the correct icon after a config reload.
+func IsPaused() bool { return paused.Load() }
+
+// Quit stops the tray; Run returns shortly after and the process can exit.
+func Quit() { systray.Quit() }
 
 // SetState updates the icon and tooltip. Safe to call from any goroutine; it
 // is a no-op until the tray is ready.
@@ -73,24 +84,50 @@ func onReady() {
 	}
 	SetState(cfg.InitialState)
 
-	pauseItem = systray.AddMenuItem("⏸ Pause", "Pause expansion")
-	reloadItem := systray.AddMenuItem("🔄 Reload Config", "Re-read and re-decrypt config.yml")
-	openItem := systray.AddMenuItem("📝 Open Config File", "Open config.yml in the default editor")
+	// Each item is added only when its callback is set; the unset channels stay
+	// nil and never fire in the select below. A nil channel blocks forever, so
+	// the error tray's reduced menu works without extra branching.
+	var setupCh, pauseCh, reloadCh, openCh, errLogCh <-chan struct{}
+
+	if cfg.OnSetup != nil {
+		setupCh = systray.AddMenuItem("⚙ Setup…", "Open the setup window to manage shortcuts").ClickedCh
+	}
+	if cfg.OnPauseToggle != nil {
+		pauseItem = systray.AddMenuItem("⏸ Pause", "Pause expansion")
+		pauseCh = pauseItem.ClickedCh
+	}
+	if cfg.OnReloadConfig != nil {
+		reloadCh = systray.AddMenuItem("🔄 Reload Config", "Re-read and re-decrypt config.yml").ClickedCh
+	}
+	if cfg.OnOpenConfig != nil {
+		openCh = systray.AddMenuItem("📝 Open Config File", "Open config.yml in the default editor").ClickedCh
+	}
+	if cfg.OnOpenErrorLog != nil {
+		errLogCh = systray.AddMenuItem("📄 Open Error Log", "Open error.log in the default editor").ClickedCh
+	}
 	systray.AddSeparator()
-	exitItem := systray.AddMenuItem("❌ Exit", "Stop Expander and exit")
+	exitCh := systray.AddMenuItem("❌ Exit", "Stop Expander and exit").ClickedCh
 
 	go func() {
 		for {
 			select {
-			case <-pauseItem.ClickedCh:
+			case <-setupCh:
+				if cfg.OnSetup != nil {
+					cfg.OnSetup()
+				}
+			case <-pauseCh:
 				togglePause()
-			case <-reloadItem.ClickedCh:
+			case <-reloadCh:
 				handleReload()
-			case <-openItem.ClickedCh:
+			case <-openCh:
 				if cfg.OnOpenConfig != nil {
 					cfg.OnOpenConfig()
 				}
-			case <-exitItem.ClickedCh:
+			case <-errLogCh:
+				if cfg.OnOpenErrorLog != nil {
+					cfg.OnOpenErrorLog()
+				}
+			case <-exitCh:
 				if cfg.OnExit != nil {
 					cfg.OnExit()
 				}
